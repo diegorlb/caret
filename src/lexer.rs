@@ -2,20 +2,25 @@ use std::{iter::Peekable, str::Chars};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenType {
-    EOF,
+    Plus,
+    PlusEqual,
 
-    PLUS,
-    MINUS,
-    SLASH,
-    ASTERISK,
+    Minus,
+    MinusEqual,
+
+    Slash,
+    SlashEqual,
+
+    Asterisk,
+    AsteriskEqual,
 }
 
 #[derive(Debug)]
 pub struct Token {
-    token_type: TokenType,
+    pub token_type: TokenType,
 
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 
 pub struct Lexer<'c> {
@@ -31,44 +36,85 @@ impl<'c> Lexer<'c> {
         Self {
             chars: source.chars().peekable(),
 
-            line: 0,
+            line: 1,
             column: 0,
         }
     }
 
-    fn next_char(&mut self) -> char {
-        match self.chars.next() {
-            Some(next) => {
-                self.column += 1;
-
-                next
+    fn next_char(&mut self) -> Option<char> {
+        self.chars.next().inspect(|&next| match next {
+            '\n' => {
+                self.line += 1;
+                self.column = 0;
             }
 
-            None => '0',
+            _ => {
+                self.column += 1;
+            }
+        })
+    }
+
+    fn peek_char(&mut self) -> Option<char> {
+        self.chars.peek().copied()
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self.peek_char().is_some_and(char::is_whitespace) {
+            self.next_char();
         }
     }
 
-    fn peek_char(&mut self) -> &char {
-        self.chars.peek().unwrap_or(&'0')
-    }
+    fn read_token(&mut self) -> Option<Token> {
+        self.skip_whitespace();
 
-    fn read_token(&mut self) -> Token {
-        let token_type = match self.next_char() {
-            '0' => TokenType::EOF,
+        let line = self.line;
+        let column = self.column + 1;
 
-            '+' => TokenType::PLUS,
-            '-' => TokenType::MINUS,
-            '/' => TokenType::SLASH,
-            '*' => TokenType::ASTERISK,
+        let token_type = match self.next_char()? {
+            '+' => match self.peek_char() {
+                Some('=') => {
+                    self.next_char()?;
+                    TokenType::PlusEqual
+                }
 
-            _ => todo!(""),
+                _ => TokenType::Plus,
+            },
+
+            '-' => match self.peek_char() {
+                Some('=') => {
+                    self.next_char()?;
+                    TokenType::MinusEqual
+                }
+
+                _ => TokenType::Minus,
+            },
+
+            '/' => match self.peek_char() {
+                Some('=') => {
+                    self.next_char()?;
+                    TokenType::SlashEqual
+                }
+
+                _ => TokenType::Slash,
+            },
+
+            '*' => match self.peek_char() {
+                Some('=') => {
+                    self.next_char()?;
+                    TokenType::AsteriskEqual
+                }
+
+                _ => TokenType::Asterisk,
+            },
+
+            value => todo!("unhandled character: {value:?}"),
         };
 
-        Token {
+        Some(Token {
             token_type,
-            line: self.line,
-            column: self.column,
-        }
+            line,
+            column,
+        })
     }
 }
 
@@ -76,14 +122,7 @@ impl Iterator for Lexer<'_> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.read_token() {
-            Token {
-                token_type: TokenType::EOF,
-                ..
-            } => None,
-
-            token => Some(token),
-        }
+        self.read_token()
     }
 }
 
@@ -93,14 +132,26 @@ mod tests {
 
     #[test]
     fn test_basic() {
+        let source = r"
+            +-/*
+            +=
+            -=
+            /=
+            *=
+        ";
+
         let expected = [
-            TokenType::PLUS,
-            TokenType::MINUS,
-            TokenType::SLASH,
-            TokenType::ASTERISK,
+            TokenType::Plus,
+            TokenType::Minus,
+            TokenType::Slash,
+            TokenType::Asterisk,
+            TokenType::PlusEqual,
+            TokenType::MinusEqual,
+            TokenType::SlashEqual,
+            TokenType::AsteriskEqual,
         ];
 
-        let lexer = Lexer::new("+-/*");
+        let lexer = Lexer::new(source);
         for (i, token) in lexer.enumerate() {
             assert_eq!(token.token_type, expected[i]);
         }

@@ -1,4 +1,5 @@
-#[warn(clippy::nursery, clippy::perf, clippy::pedantic)]
+#![warn(clippy::nursery, clippy::pedantic, clippy::style)]
+
 pub mod lexer;
 
 fn main() {
