@@ -1,5 +1,7 @@
 use std::{iter::Peekable, str::Chars};
 
+use thiserror::Error;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum KeywordType {
     True,
@@ -18,7 +20,7 @@ pub enum TokenType {
     Minus,         // -
     MinusEqual,    // -=
     Slash,         // /
-    SlashEqual,    // /*
+    SlashEqual,    // /=
     Asterisk,      // *
     AsteriskEqual, // *=
     LeftParen,     // (
@@ -27,6 +29,9 @@ pub enum TokenType {
     RightBracket,  // ]
     LeftBrace,     // {
     RightBrace,    // }
+    Comma,         // ,
+    Colon,         // :
+    Semicolon,     // ;
 
     Keyword(KeywordType),
     Identifier(String),
@@ -42,14 +47,20 @@ pub struct Token {
     pub column: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum LexerErrorType {
+    #[error("unterminated string")]
     UnterminatedString,
+
+    #[error("integer overflow")]
     IntegerOverflow,
+
+    #[error("unknown character: {0:?}")]
     UnknownCharacter(char),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("{error_type} at line {line}, column {column}")]
 pub struct LexerError {
     pub error_type: LexerErrorType,
 
@@ -99,10 +110,6 @@ impl<'c> Lexer<'c> {
         self.next_char_if(|peek| peek == expected)
     }
 
-    fn next_char_if_neq(&mut self, expected: char) -> Option<char> {
-        self.next_char_if(|peek| peek != expected)
-    }
-
     fn peek_char(&mut self) -> Option<char> {
         self.chars.peek().copied()
     }
@@ -111,6 +118,62 @@ impl<'c> Lexer<'c> {
         while self.peek_char().is_some_and(char::is_whitespace) {
             self.next_char();
         }
+    }
+
+    fn read_string_literal(&mut self, line: usize, column: usize) -> Result<TokenType, LexerError> {
+        let mut string_literal = String::new();
+        loop {
+            match self.next_char() {
+                Some('"') => break,
+                Some(ch) => string_literal.push(ch),
+                None => {
+                    return Err(LexerError {
+                        error_type: LexerErrorType::UnterminatedString,
+                        line,
+                        column,
+                    });
+                }
+            }
+        }
+
+        Ok(TokenType::StringLiteral(string_literal))
+    }
+
+    fn read_integer_literal(
+        &mut self,
+        current_char: char,
+        line: usize,
+        column: usize,
+    ) -> Result<TokenType, LexerError> {
+        let mut integer_literal = String::from(current_char);
+        while let Some(ch) = self.next_char_if(|ch| ch.is_ascii_digit()) {
+            integer_literal.push(ch);
+        }
+
+        Ok(TokenType::IntegerLiteral(
+            integer_literal.parse::<i64>().map_err(|_| LexerError {
+                error_type: LexerErrorType::IntegerOverflow,
+                line,
+                column,
+            })?,
+        ))
+    }
+
+    fn read_identifier_or_keyword(&mut self, current_char: char) -> TokenType {
+        let mut identifier = String::from(current_char);
+        while let Some(ch) = self.next_char_if(|ch| (ch == '_') || ch.is_ascii_alphanumeric()) {
+            identifier.push(ch);
+        }
+
+        let keyword_type = match identifier.as_str() {
+            "true" => Some(KeywordType::True),
+            "false" => Some(KeywordType::False),
+            "fn" => Some(KeywordType::Fn),
+
+            _ => None,
+        };
+
+        keyword_type.map_or_else(|| TokenType::Identifier(identifier), TokenType::Keyword)
     }
 
     fn read_token(&mut self) -> Result<Option<Token>, LexerError> {
@@ -163,57 +226,18 @@ impl<'c> Lexer<'c> {
             '{' => TokenType::LeftBrace,
             '}' => TokenType::RightBrace,
 
-            '"' => {
-                let mut string_literal = String::new();
-                while let Some(next_char) = self.next_char_if_neq('"') {
-                    string_literal.push(next_char);
-                }
+            ',' => TokenType::Comma,
+            ':' => TokenType::Colon,
+            ';' => TokenType::Semicolon,
 
-                if self.next_char().is_none() {
-                    return Err(LexerError {
-                        error_type: LexerErrorType::UnterminatedString,
-                        line,
-                        column,
-                    });
-                }
+            '"' => self.read_string_literal(line, column)?,
 
-                TokenType::StringLiteral(string_literal)
+            current_char if current_char.is_ascii_digit() => {
+                self.read_integer_literal(current_char, line, column)?
             }
 
             current_char if (current_char == '_') || current_char.is_ascii_alphabetic() => {
-                let mut identifier = String::from(current_char);
-                while let Some(next_char) = self.next_char_if(|next_char| {
-                    (next_char == '_') || next_char.is_ascii_alphanumeric()
-                }) {
-                    identifier.push(next_char);
-                }
-
-                let keyword_type = match identifier.as_str() {
-                    "true" => Some(KeywordType::True),
-                    "false" => Some(KeywordType::False),
-                    "fn" => Some(KeywordType::Fn),
-
-                    _ => None,
-                };
-
-                keyword_type.map_or_else(|| TokenType::Identifier(identifier), TokenType::Keyword)
-            }
-
-            current_char if current_char.is_ascii_digit() => {
-                let mut integer_literal = String::from(current_char);
-                while let Some(next_char) =
-                    self.next_char_if(|next_char| next_char.is_ascii_digit())
-                {
-                    integer_literal.push(next_char);
-                }
-
-                TokenType::IntegerLiteral(integer_literal.parse::<i64>().map_err(|_| {
-                    LexerError {
-                        error_type: LexerErrorType::IntegerOverflow,
-                        line,
-                        column,
-                    }
-                })?)
+                self.read_identifier_or_keyword(current_char)
             }
 
             current_char => {
@@ -242,140 +266,74 @@ impl Iterator for Lexer<'_> {
 }
 
 #[cfg(test)]
+macro_rules! test_lexer {
+    ($name:ident, [$($char:literal => $expected:expr),+]) => {
+        #[test]
+        fn $name() -> Result<(), LexerError> {
+            let source = concat!($($char, " "),+);
+            let expected = [$($expected),+];
+
+            let lexer = Lexer::new(source);
+            let tokens = lexer.collect::<Result<Vec<_>, LexerError>>()?;
+
+            assert_eq!(tokens.len(), expected.len());
+
+            for (token, expected) in tokens.iter().zip(expected.iter()) {
+                assert_eq!(token.token_type, *expected);
+            }
+
+            Ok(())
+        }
+    };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn basic_operators() -> Result<(), LexerError> {
-        let source = r"
-            = ==
-            ! !=
-            + +=
-            - -=
-            / /=
-            * *=
-        ";
+    test_lexer!(operators, [
+        "="  => TokenType::Equal,
+        "==" => TokenType::EqualEqual,
+        "!"  => TokenType::Bang,
+        "!=" => TokenType::BangEqual,
+        "+"  => TokenType::Plus,
+        "+=" => TokenType::PlusEqual,
+        "-"  => TokenType::Minus,
+        "-=" => TokenType::MinusEqual,
+        "/"  => TokenType::Slash,
+        "/=" => TokenType::SlashEqual,
+        "*"  => TokenType::Asterisk,
+        "*=" => TokenType::AsteriskEqual
+    ]);
 
-        let expected = [
-            TokenType::Equal,
-            TokenType::EqualEqual,
-            TokenType::Bang,
-            TokenType::BangEqual,
-            TokenType::Plus,
-            TokenType::PlusEqual,
-            TokenType::Minus,
-            TokenType::MinusEqual,
-            TokenType::Slash,
-            TokenType::SlashEqual,
-            TokenType::Asterisk,
-            TokenType::AsteriskEqual,
-        ];
+    test_lexer!(delimiters, [
+        "(" => TokenType::LeftParen,
+        ")" => TokenType::RightParen,
+        "[" => TokenType::LeftBracket,
+        "]" => TokenType::RightBracket,
+        "{" => TokenType::LeftBrace,
+        "}" => TokenType::RightBrace
+    ]);
 
-        let lexer = Lexer::new(source);
-        for (i, token) in lexer.enumerate() {
-            let token = token?;
-            assert_eq!(token.token_type, expected[i]);
-        }
+    test_lexer!(keywords, [
+        "true"  => TokenType::Keyword(KeywordType::True),
+        "false" => TokenType::Keyword(KeywordType::False),
+        "fn"    => TokenType::Keyword(KeywordType::Fn)
+    ]);
 
-        Ok(())
-    }
+    test_lexer!(identifiers, [
+        "_test"     => TokenType::Identifier(String::from("_test")),
+        "test"      => TokenType::Identifier(String::from("test")),
+        "test_"     => TokenType::Identifier(String::from("test_")),
+        "test_test" => TokenType::Identifier(String::from("test_test")),
+        "test1"     => TokenType::Identifier(String::from("test1")),
+        "test_2"    => TokenType::Identifier(String::from("test_2"))
+    ]);
 
-    #[test]
-    fn basic_delimiters() -> Result<(), LexerError> {
-        let source = r"()[]{}";
-
-        let expected = [
-            TokenType::LeftParen,
-            TokenType::RightParen,
-            TokenType::LeftBracket,
-            TokenType::RightBracket,
-            TokenType::LeftBrace,
-            TokenType::RightBrace,
-        ];
-
-        let lexer = Lexer::new(source);
-        for (i, token) in lexer.enumerate() {
-            let token = token?;
-            assert_eq!(token.token_type, expected[i]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn basic_keywords() -> Result<(), LexerError> {
-        let source = r"
-            true
-            false
-            fn
-        ";
-
-        let expected = [
-            TokenType::Keyword(KeywordType::True),
-            TokenType::Keyword(KeywordType::False),
-            TokenType::Keyword(KeywordType::Fn),
-        ];
-
-        let lexer = Lexer::new(source);
-        for (i, token) in lexer.enumerate() {
-            let token = token?;
-            assert_eq!(token.token_type, expected[i]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn basic_identifiers() -> Result<(), LexerError> {
-        let source = r"
-            _test
-            test
-            test_
-            test_test
-            test1
-            test_2
-        ";
-
-        let expected = [
-            TokenType::Identifier(String::from("_test")),
-            TokenType::Identifier(String::from("test")),
-            TokenType::Identifier(String::from("test_")),
-            TokenType::Identifier(String::from("test_test")),
-            TokenType::Identifier(String::from("test1")),
-            TokenType::Identifier(String::from("test_2")),
-        ];
-
-        let lexer = Lexer::new(source);
-        for (i, token) in lexer.enumerate() {
-            let token = token?;
-            assert_eq!(token.token_type, expected[i]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn basic_literals() -> Result<(), LexerError> {
-        let source = r#"
-            1
-            1234
-            "test"
-            "test with spaces"
-        "#;
-
-        let expected = [
-            TokenType::IntegerLiteral(1),
-            TokenType::IntegerLiteral(1234),
-            TokenType::StringLiteral(String::from("test")),
-            TokenType::StringLiteral(String::from("test with spaces")),
-        ];
-
-        let lexer = Lexer::new(source);
-        for (i, token) in lexer.enumerate() {
-            let token = token?;
-            assert_eq!(token.token_type, expected[i]);
-        }
-
-        Ok(())
-    }
+    test_lexer!(literals, [
+        "1"                    => TokenType::IntegerLiteral(1),
+        "1234"                 => TokenType::IntegerLiteral(1234),
+        "\"test\""             => TokenType::StringLiteral(String::from("test")),
+        "\"test with spaces\"" => TokenType::StringLiteral(String::from("test with spaces"))
+    ]);
 }
