@@ -40,18 +40,6 @@ pub enum TokenType {
     IntegerLiteral(i64),
 }
 
-impl TokenType {
-    #[must_use]
-    pub const fn binding(&self) -> Option<(u8, u8)> {
-        match self {
-            Self::Plus | Self::Minus => Some((1, 2)),
-            Self::Asterisk | Self::Slash => Some((3, 4)),
-
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Token {
     pub token_type: TokenType,

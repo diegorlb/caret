@@ -4,7 +4,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOperation, Expression, FunctionDeclaration, Program, Statement, VariableDeclaration,
+        BinaryOperation, BinaryOperator, Expression, FunctionDeclaration, Program, Statement,
+        UnaryExpression, UnaryOperator, VariableDeclaration,
     },
     lexer::{KeywordType, Lexer, LexerError, TokenType},
 };
@@ -148,9 +149,10 @@ impl<'c> Parser<'c> {
                 KeywordType::True | KeywordType::False => self.parse_expression_statement(),
             },
 
-            TokenType::Identifier(_) | TokenType::IntegerLiteral(_) => {
-                self.parse_expression_statement()
-            }
+            TokenType::Identifier(_)
+            | TokenType::IntegerLiteral(_)
+            | TokenType::Minus
+            | TokenType::Bang => self.parse_expression_statement(),
 
             unknown_token => Err(ParserError::UnexpectedToken {
                 token_type: unknown_token,
@@ -163,25 +165,35 @@ impl<'c> Parser<'c> {
     fn parse_expression(&mut self, current_binding: u8) -> ParserResult<Expression> {
         let token_type = self.next_token()?;
         let mut lhs = match token_type {
+            TokenType::Identifier(identifier) => Expression::Identifier(identifier),
+            TokenType::StringLiteral(literal) => Expression::StringLiteral(literal),
             TokenType::IntegerLiteral(literal) => Expression::IntegerLiteral(literal),
-            TokenType::Keyword(ref keyword) => match keyword {
-                KeywordType::True => Expression::BooleanLiteral(true),
-                KeywordType::False => Expression::BooleanLiteral(false),
 
-                _ => {
-                    return Err(ParserError::UnexpectedToken {
-                        token_type,
-                        line: self.last_line,
-                        column: self.last_column,
-                    });
-                }
-            },
+            TokenType::Keyword(KeywordType::True) => Expression::BooleanLiteral(true),
+            TokenType::Keyword(KeywordType::False) => Expression::BooleanLiteral(false),
 
             TokenType::LeftParen => {
                 let expression = self.parse_expression(0)?;
                 self.expect_token(&TokenType::RightParen)?;
 
                 expression
+            }
+
+            TokenType::Minus | TokenType::Bang => {
+                let operator = UnaryOperator::try_from(&token_type).map_err(|()| {
+                    ParserError::UnexpectedToken {
+                        token_type,
+                        line: self.last_line,
+                        column: self.last_column,
+                    }
+                })?;
+
+                let expression = self.parse_expression(operator.binding())?;
+
+                Expression::UnaryExpression(UnaryExpression {
+                    operator,
+                    expression: Box::new(expression),
+                })
             }
 
             token_type => {
@@ -193,12 +205,12 @@ impl<'c> Parser<'c> {
             }
         };
 
-        while let Some(operator) = self.peek_token()? {
-            let operator = operator.clone();
-
-            let Some((left_binding, right_binding)) = operator.binding() else {
+        while let Some(token_type) = self.peek_token()? {
+            let Ok(operator) = BinaryOperator::try_from(token_type) else {
                 break;
             };
+
+            let (left_binding, right_binding) = operator.binding();
 
             if left_binding < current_binding {
                 break;
@@ -316,9 +328,9 @@ mod test {
         let source = r"
             fn test(arg1, arg2) {
                 let a = 2;
-                2 + 3 * (4 + 5);
+                -2 + 3 * (4 + a);
                 true;
-                false;
+                !false;
             }
         ";
 
