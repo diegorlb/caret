@@ -2,14 +2,15 @@ use std::{iter::Peekable, str::Chars};
 
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum KeywordType {
     True,
     False,
+    Let,
     Fn,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TokenType {
     Equal,         // =
     EqualEqual,    // ==
@@ -39,6 +40,18 @@ pub enum TokenType {
     IntegerLiteral(i64),
 }
 
+impl TokenType {
+    #[must_use]
+    pub const fn binding(&self) -> Option<(u8, u8)> {
+        match self {
+            Self::Plus | Self::Minus => Some((1, 2)),
+            Self::Asterisk | Self::Slash => Some((3, 4)),
+
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Token {
     pub token_type: TokenType,
@@ -47,7 +60,7 @@ pub struct Token {
     pub column: usize,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum LexerErrorType {
     #[error("unterminated string")]
     UnterminatedString,
@@ -59,7 +72,7 @@ pub enum LexerErrorType {
     UnknownCharacter(char),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 #[error("{error_type} at line {line}, column {column}")]
 pub struct LexerError {
     pub error_type: LexerErrorType,
@@ -168,6 +181,7 @@ impl<'c> Lexer<'c> {
         let keyword_type = match identifier.as_str() {
             "true" => Some(KeywordType::True),
             "false" => Some(KeywordType::False),
+            "let" => Some(KeywordType::Let),
             "fn" => Some(KeywordType::Fn),
 
             _ => None,
