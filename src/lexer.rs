@@ -8,6 +8,7 @@ pub enum KeywordType {
     False,
     Let,
     Fn,
+    Return,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -30,6 +31,7 @@ pub enum TokenType {
     RightBracket,  // ]
     LeftBrace,     // {
     RightBrace,    // }
+    Dot,           // .
     Comma,         // ,
     Colon,         // :
     Semicolon,     // ;
@@ -171,6 +173,7 @@ impl<'c> Lexer<'c> {
             "false" => Some(KeywordType::False),
             "let" => Some(KeywordType::Let),
             "fn" => Some(KeywordType::Fn),
+            "return" => Some(KeywordType::Return),
 
             _ => None,
         };
@@ -229,6 +232,7 @@ impl<'c> Lexer<'c> {
             '}' => TokenType::RightBrace,
 
             ',' => TokenType::Comma,
+            '.' => TokenType::Dot,
             ':' => TokenType::Colon,
             ';' => TokenType::Semicolon,
 

@@ -4,8 +4,9 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOperation, BinaryOperator, Expression, FunctionDeclaration, Program, Statement,
-        UnaryExpression, UnaryOperator, VariableDeclaration,
+        BinaryOperation, BinaryOperator, Expression, FieldAccess, FunctionCall,
+        FunctionDeclaration, Program, Statement, UnaryOperation, UnaryOperator,
+        VariableDeclaration,
     },
     lexer::{KeywordType, Lexer, LexerError, TokenType},
 };
@@ -145,12 +146,14 @@ impl<'c> Parser<'c> {
             TokenType::Keyword(keyword) => match keyword {
                 KeywordType::Let => self.parse_variable_declaration_statement(),
                 KeywordType::Fn => self.parse_function_declaration_statement(),
+                KeywordType::Return => self.parse_return_statement(),
 
                 KeywordType::True | KeywordType::False => self.parse_expression_statement(),
             },
 
             TokenType::Identifier(_)
             | TokenType::IntegerLiteral(_)
+            | TokenType::LeftParen
             | TokenType::Minus
             | TokenType::Bang => self.parse_expression_statement(),
 
@@ -164,7 +167,7 @@ impl<'c> Parser<'c> {
 
     fn parse_expression(&mut self, current_binding: u8) -> ParserResult<Expression> {
         let token_type = self.next_token()?;
-        let mut lhs = match token_type {
+        let lhs = match token_type {
             TokenType::Identifier(identifier) => Expression::Identifier(identifier),
             TokenType::StringLiteral(literal) => Expression::StringLiteral(literal),
             TokenType::IntegerLiteral(literal) => Expression::IntegerLiteral(literal),
@@ -179,22 +182,7 @@ impl<'c> Parser<'c> {
                 expression
             }
 
-            TokenType::Minus | TokenType::Bang => {
-                let operator = UnaryOperator::try_from(&token_type).map_err(|()| {
-                    ParserError::UnexpectedToken {
-                        token_type,
-                        line: self.last_line,
-                        column: self.last_column,
-                    }
-                })?;
-
-                let expression = self.parse_expression(operator.binding())?;
-
-                Expression::UnaryExpression(UnaryExpression {
-                    operator,
-                    expression: Box::new(expression),
-                })
-            }
+            TokenType::Minus | TokenType::Bang => self.parse_unary_expression(token_type)?,
 
             token_type => {
                 return Err(ParserError::UnexpectedToken {
@@ -205,27 +193,87 @@ impl<'c> Parser<'c> {
             }
         };
 
+        self.parse_binary_expression(current_binding, lhs)
+    }
+
+    fn parse_unary_expression(&mut self, token_type: TokenType) -> ParserResult<Expression> {
+        let operator =
+            UnaryOperator::try_from(&token_type).map_err(|()| ParserError::UnexpectedToken {
+                token_type,
+                line: self.last_line,
+                column: self.last_column,
+            })?;
+
+        let expression = self.parse_expression(operator.binding())?;
+
+        Ok(Expression::UnaryOperation(UnaryOperation {
+            operator,
+            expression: Box::new(expression),
+        }))
+    }
+
+    fn parse_binary_expression(
+        &mut self,
+        current_binding: u8,
+        mut lhs: Expression,
+    ) -> ParserResult<Expression> {
         while let Some(token_type) = self.peek_token()? {
             let Ok(operator) = BinaryOperator::try_from(token_type) else {
-                break;
+                return Ok(lhs);
             };
 
             let (left_binding, right_binding) = operator.binding();
 
             if left_binding < current_binding {
-                break;
+                return Ok(lhs);
             }
 
             self.next_token()?;
 
-            lhs = Expression::BinaryOperation(BinaryOperation {
-                operator,
-                lhs: Box::new(lhs),
-                rhs: Box::new(self.parse_expression(right_binding)?),
-            });
+            lhs = match operator {
+                BinaryOperator::Call => self.parse_call_expression(lhs)?,
+                BinaryOperator::Access => self.parse_access_expression(lhs)?,
+
+                _ => Expression::BinaryOperation(BinaryOperation {
+                    operator,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(self.parse_expression(right_binding)?),
+                }),
+            };
         }
 
         Ok(lhs)
+    }
+
+    fn parse_call_expression(&mut self, lhs: Expression) -> ParserResult<Expression> {
+        let args = self
+            .parse_comma_separated(|parser| parser.parse_expression(0), &TokenType::RightParen)?;
+
+        self.expect_token(&TokenType::RightParen)?;
+
+        Ok(Expression::FunctionCall(FunctionCall {
+            callee: Box::new(lhs),
+            args,
+        }))
+    }
+
+    fn parse_access_expression(&mut self, lhs: Expression) -> ParserResult<Expression> {
+        let field = match self.next_token()? {
+            TokenType::Identifier(value) => value,
+
+            token_type => {
+                return Err(ParserError::UnexpectedToken {
+                    token_type,
+                    line: self.last_line,
+                    column: self.last_column,
+                });
+            }
+        };
+
+        Ok(Expression::FieldAccess(FieldAccess {
+            receiver: Box::new(lhs),
+            field,
+        }))
     }
 
     fn parse_expression_statement(&mut self) -> ParserResult<Statement> {
@@ -302,6 +350,16 @@ impl<'c> Parser<'c> {
         }))
     }
 
+    fn parse_return_statement(&mut self) -> ParserResult<Statement> {
+        self.expect_token(&TokenType::Keyword(KeywordType::Return))?;
+
+        let expression = self.parse_expression(0)?;
+
+        self.expect_token(&TokenType::Semicolon)?;
+
+        Ok(Statement::Return(expression))
+    }
+
     fn parse_block_statement(&mut self) -> ParserResult<Vec<Statement>> {
         let mut statements = Vec::new();
 
@@ -331,6 +389,10 @@ mod test {
                 -2 + 3 * (4 + a);
                 true;
                 !false;
+                return a;
+                test(a);
+                a.b;
+                a.b.c();
             }
         ";
 

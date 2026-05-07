@@ -1,21 +1,25 @@
 use crate::lexer::TokenType;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum UnaryOperator {
     Neg,
     Not,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BinaryOperator {
     Add,
     Sub,
     Mul,
     Div,
+
+    Call,
+    Access,
 }
 
 impl UnaryOperator {
     #[must_use]
+    #[inline]
     pub const fn binding(&self) -> u8 {
         10
     }
@@ -27,6 +31,8 @@ impl BinaryOperator {
         match self {
             Self::Add | Self::Sub => (1, 2),
             Self::Mul | Self::Div => (3, 4),
+
+            Self::Call | Self::Access => (7, 8),
         }
     }
 }
@@ -56,6 +62,9 @@ impl TryFrom<&TokenType> for BinaryOperator {
             TokenType::Asterisk => Self::Mul,
             TokenType::Slash => Self::Div,
 
+            TokenType::Dot => Self::Access,
+            TokenType::LeftParen => Self::Call,
+
             _ => return Err(()),
         };
 
@@ -63,48 +72,63 @@ impl TryFrom<&TokenType> for BinaryOperator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Program(pub Vec<Statement>);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
     Expression(Expression),
     VariableDeclaration(VariableDeclaration),
     FunctionDeclaration(FunctionDeclaration),
+    Return(Expression),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct VariableDeclaration {
     pub name: String,
     pub value: Expression,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FunctionDeclaration {
     pub name: String,
     pub params: Vec<String>,
     pub body: Vec<Statement>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
     Identifier(String),
     StringLiteral(String),
     IntegerLiteral(i64),
     BooleanLiteral(bool),
-    UnaryExpression(UnaryExpression),
+    UnaryOperation(UnaryOperation),
     BinaryOperation(BinaryOperation),
+    FunctionCall(FunctionCall),
+    FieldAccess(FieldAccess),
 }
 
-#[derive(Debug)]
-pub struct UnaryExpression {
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnaryOperation {
     pub operator: UnaryOperator,
     pub expression: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BinaryOperation {
     pub operator: BinaryOperator,
     pub lhs: Box<Expression>,
     pub rhs: Box<Expression>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FunctionCall {
+    pub callee: Box<Expression>,
+    pub args: Vec<Expression>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FieldAccess {
+    pub receiver: Box<Expression>,
+    pub field: String,
 }
