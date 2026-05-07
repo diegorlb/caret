@@ -1,23 +1,20 @@
 use crate::lexer::TokenType;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum UnaryOperator {
+pub enum PrefixOperator {
     Neg,
     Not,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum BinaryOperator {
+pub enum InfixOperator {
     Add,
     Sub,
     Mul,
     Div,
-
-    Call,
-    Access,
 }
 
-impl UnaryOperator {
+impl PrefixOperator {
     #[must_use]
     #[inline]
     pub const fn binding(&self) -> u8 {
@@ -25,19 +22,17 @@ impl UnaryOperator {
     }
 }
 
-impl BinaryOperator {
+impl InfixOperator {
     #[must_use]
     pub const fn binding(&self) -> (u8, u8) {
         match self {
             Self::Add | Self::Sub => (1, 2),
             Self::Mul | Self::Div => (3, 4),
-
-            Self::Call | Self::Access => (7, 8),
         }
     }
 }
 
-impl TryFrom<&TokenType> for UnaryOperator {
+impl TryFrom<&TokenType> for PrefixOperator {
     type Error = ();
 
     fn try_from(value: &TokenType) -> Result<Self, Self::Error> {
@@ -52,7 +47,7 @@ impl TryFrom<&TokenType> for UnaryOperator {
     }
 }
 
-impl TryFrom<&TokenType> for BinaryOperator {
+impl TryFrom<&TokenType> for InfixOperator {
     type Error = ();
 
     fn try_from(value: &TokenType) -> Result<Self, Self::Error> {
@@ -61,9 +56,6 @@ impl TryFrom<&TokenType> for BinaryOperator {
             TokenType::Minus => Self::Sub,
             TokenType::Asterisk => Self::Mul,
             TokenType::Slash => Self::Div,
-
-            TokenType::Dot => Self::Access,
-            TokenType::LeftParen => Self::Call,
 
             _ => return Err(()),
         };
@@ -102,21 +94,21 @@ pub enum Expression {
     StringLiteral(String),
     IntegerLiteral(i64),
     BooleanLiteral(bool),
-    UnaryOperation(UnaryOperation),
-    BinaryOperation(BinaryOperation),
+    PrefixOperation(PrefixOperation),
+    InfixOperation(InfixOperation),
     FunctionCall(FunctionCall),
     FieldAccess(FieldAccess),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct UnaryOperation {
-    pub operator: UnaryOperator,
+pub struct PrefixOperation {
+    pub operator: PrefixOperator,
     pub expression: Box<Expression>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct BinaryOperation {
-    pub operator: BinaryOperator,
+pub struct InfixOperation {
+    pub operator: InfixOperator,
     pub lhs: Box<Expression>,
     pub rhs: Box<Expression>,
 }

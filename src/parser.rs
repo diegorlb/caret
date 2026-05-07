@@ -4,9 +4,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOperation, BinaryOperator, Expression, FieldAccess, FunctionCall,
-        FunctionDeclaration, Program, Statement, UnaryOperation, UnaryOperator,
-        VariableDeclaration,
+        Expression, FieldAccess, FunctionCall, FunctionDeclaration, InfixOperation, InfixOperator,
+        PrefixOperation, PrefixOperator, Program, Statement, VariableDeclaration,
     },
     lexer::{KeywordType, Lexer, LexerError, TokenType},
 };
@@ -46,10 +45,18 @@ impl<'c> Parser<'c> {
         }
     }
 
+    const fn unexpected_token_error(&self, token_type: TokenType) -> ParserError {
+        ParserError::UnexpectedToken {
+            token_type,
+            line: self.last_line,
+            column: self.last_column,
+        }
+    }
+
     fn peek_token(&mut self) -> ParserResult<Option<&TokenType>> {
         match self.tokens.peek() {
             Some(Ok(token)) => Ok(Some(&token.token_type)),
-            Some(Err(error)) => Err(ParserError::LexerError(error.clone())),
+            Some(Err(error)) => Err(ParserError::LexerError(*error)),
             None => Ok(None),
         }
     }
@@ -82,18 +89,22 @@ impl<'c> Parser<'c> {
         }
     }
 
-    fn expect_token(&mut self, expected: &TokenType) -> ParserResult<TokenType> {
+    #[allow(clippy::needless_pass_by_value)]
+    fn expect_token(&mut self, expected: TokenType) -> ParserResult<()> {
         self.next_token().and_then(|token_type| {
-            if token_type == *expected {
-                Ok(token_type)
+            if token_type == expected {
+                Ok(())
             } else {
-                Err(ParserError::UnexpectedToken {
-                    token_type,
-                    line: self.last_line,
-                    column: self.last_column,
-                })
+                Err(self.unexpected_token_error(token_type))
             }
         })
+    }
+
+    fn expect_identifier(&mut self) -> ParserResult<String> {
+        match self.next_token()? {
+            TokenType::Identifier(identifier) => Ok(identifier),
+            token_type => Err(self.unexpected_token_error(token_type)),
+        }
     }
 
     fn parse_comma_separated<T>(
@@ -148,26 +159,32 @@ impl<'c> Parser<'c> {
                 KeywordType::Fn => self.parse_function_declaration_statement(),
                 KeywordType::Return => self.parse_return_statement(),
 
-                KeywordType::True | KeywordType::False => self.parse_expression_statement(),
+                _ => self.parse_expression_statement(),
             },
 
             TokenType::Identifier(_)
             | TokenType::IntegerLiteral(_)
+            | TokenType::StringLiteral(_)
             | TokenType::LeftParen
             | TokenType::Minus
             | TokenType::Bang => self.parse_expression_statement(),
 
-            unknown_token => Err(ParserError::UnexpectedToken {
-                token_type: unknown_token,
-                line: self.last_line,
-                column: self.last_column,
-            }),
+            token_type => Err(self.unexpected_token_error(token_type)),
         }
     }
 
     fn parse_expression(&mut self, current_binding: u8) -> ParserResult<Expression> {
         let token_type = self.next_token()?;
-        let lhs = match token_type {
+
+        let mut lhs = self.parse_primary_expression(token_type)?;
+        lhs = self.parse_postfix_expression(lhs)?;
+        lhs = self.parse_infix_expression(current_binding, lhs)?;
+
+        Ok(lhs)
+    }
+
+    fn parse_primary_expression(&mut self, token_type: TokenType) -> ParserResult<Expression> {
+        let expression = match token_type {
             TokenType::Identifier(identifier) => Expression::Identifier(identifier),
             TokenType::StringLiteral(literal) => Expression::StringLiteral(literal),
             TokenType::IntegerLiteral(literal) => Expression::IntegerLiteral(literal),
@@ -177,48 +194,38 @@ impl<'c> Parser<'c> {
 
             TokenType::LeftParen => {
                 let expression = self.parse_expression(0)?;
-                self.expect_token(&TokenType::RightParen)?;
+                self.expect_token(TokenType::RightParen)?;
 
                 expression
             }
 
-            TokenType::Minus | TokenType::Bang => self.parse_unary_expression(token_type)?,
+            TokenType::Minus | TokenType::Bang => self.parse_prefix_expression(token_type)?,
 
-            token_type => {
-                return Err(ParserError::UnexpectedToken {
-                    token_type,
-                    line: self.last_line,
-                    column: self.last_column,
-                });
-            }
+            token_type => return Err(self.unexpected_token_error(token_type)),
         };
 
-        self.parse_binary_expression(current_binding, lhs)
+        Ok(expression)
     }
 
-    fn parse_unary_expression(&mut self, token_type: TokenType) -> ParserResult<Expression> {
-        let operator =
-            UnaryOperator::try_from(&token_type).map_err(|()| ParserError::UnexpectedToken {
-                token_type,
-                line: self.last_line,
-                column: self.last_column,
-            })?;
+    fn parse_prefix_expression(&mut self, token_type: TokenType) -> ParserResult<Expression> {
+        let operator = PrefixOperator::try_from(&token_type)
+            .map_err(|()| self.unexpected_token_error(token_type))?;
 
         let expression = self.parse_expression(operator.binding())?;
 
-        Ok(Expression::UnaryOperation(UnaryOperation {
+        Ok(Expression::PrefixOperation(PrefixOperation {
             operator,
             expression: Box::new(expression),
         }))
     }
 
-    fn parse_binary_expression(
+    fn parse_infix_expression(
         &mut self,
         current_binding: u8,
         mut lhs: Expression,
     ) -> ParserResult<Expression> {
         while let Some(token_type) = self.peek_token()? {
-            let Ok(operator) = BinaryOperator::try_from(token_type) else {
+            let Ok(operator) = InfixOperator::try_from(token_type) else {
                 return Ok(lhs);
             };
 
@@ -230,80 +237,71 @@ impl<'c> Parser<'c> {
 
             self.next_token()?;
 
-            lhs = match operator {
-                BinaryOperator::Call => self.parse_call_expression(lhs)?,
-                BinaryOperator::Access => self.parse_access_expression(lhs)?,
-
-                _ => Expression::BinaryOperation(BinaryOperation {
-                    operator,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(self.parse_expression(right_binding)?),
-                }),
-            };
+            let rhs = self.parse_expression(right_binding)?;
+            lhs = Expression::InfixOperation(InfixOperation {
+                operator,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            });
         }
 
         Ok(lhs)
     }
 
-    fn parse_call_expression(&mut self, lhs: Expression) -> ParserResult<Expression> {
-        let args = self
-            .parse_comma_separated(|parser| parser.parse_expression(0), &TokenType::RightParen)?;
+    fn parse_postfix_expression(&mut self, mut lhs: Expression) -> ParserResult<Expression> {
+        while let Some(token_type) = self.peek_token()? {
+            lhs = match token_type {
+                TokenType::LeftParen => {
+                    self.next_token()?;
 
-        self.expect_token(&TokenType::RightParen)?;
+                    let args = self.parse_comma_separated(
+                        |parser| parser.parse_expression(0),
+                        &TokenType::RightParen,
+                    )?;
 
-        Ok(Expression::FunctionCall(FunctionCall {
-            callee: Box::new(lhs),
-            args,
-        }))
-    }
+                    self.expect_token(TokenType::RightParen)?;
 
-    fn parse_access_expression(&mut self, lhs: Expression) -> ParserResult<Expression> {
-        let field = match self.next_token()? {
-            TokenType::Identifier(value) => value,
+                    Expression::FunctionCall(FunctionCall {
+                        callee: Box::new(lhs),
+                        args,
+                    })
+                }
 
-            token_type => {
-                return Err(ParserError::UnexpectedToken {
-                    token_type,
-                    line: self.last_line,
-                    column: self.last_column,
-                });
+                TokenType::Dot => {
+                    self.next_token()?;
+                    let field = self.expect_identifier()?;
+
+                    Expression::FieldAccess(FieldAccess {
+                        receiver: Box::new(lhs),
+                        field,
+                    })
+                }
+
+                _ => break,
             }
-        };
+        }
 
-        Ok(Expression::FieldAccess(FieldAccess {
-            receiver: Box::new(lhs),
-            field,
-        }))
+        Ok(lhs)
     }
 
     fn parse_expression_statement(&mut self) -> ParserResult<Statement> {
         let expression = self.parse_expression(0)?;
 
-        self.expect_token(&TokenType::Semicolon)?;
+        self.expect_token(TokenType::Semicolon)?;
 
         Ok(Statement::Expression(expression))
     }
 
     fn parse_variable_declaration_statement(&mut self) -> ParserResult<Statement> {
-        self.expect_token(&TokenType::Keyword(KeywordType::Let))?;
+        self.expect_token(TokenType::Keyword(KeywordType::Let))?;
 
-        let name = match self.next_token()? {
-            TokenType::Identifier(value) => value,
+        let name = self.expect_identifier()?;
 
-            token_type => {
-                return Err(ParserError::UnexpectedToken {
-                    token_type,
-                    line: self.last_line,
-                    column: self.last_column,
-                });
-            }
-        };
-
-        self.expect_token(&TokenType::Equal)?;
+        self.expect_token(TokenType::Equal)?;
 
         let value = self.parse_expression(0)?;
 
-        self.expect_token(&TokenType::Semicolon)?;
+        self.expect_token(TokenType::Semicolon)?;
 
         Ok(Statement::VariableDeclaration(VariableDeclaration {
             name,
@@ -312,34 +310,14 @@ impl<'c> Parser<'c> {
     }
 
     fn parse_function_declaration_statement(&mut self) -> ParserResult<Statement> {
-        self.expect_token(&TokenType::Keyword(KeywordType::Fn))?;
+        self.expect_token(TokenType::Keyword(KeywordType::Fn))?;
 
-        let name = match self.next_token()? {
-            TokenType::Identifier(value) => value,
+        let name = self.expect_identifier()?;
 
-            token_type => {
-                return Err(ParserError::UnexpectedToken {
-                    token_type,
-                    line: self.last_line,
-                    column: self.last_column,
-                });
-            }
-        };
-
-        self.expect_token(&TokenType::LeftParen)?;
-        let params = self.parse_comma_separated(
-            |parser| match parser.next_token()? {
-                TokenType::Identifier(name) => Ok(name),
-
-                unexpected_token_type => Err(ParserError::UnexpectedToken {
-                    token_type: unexpected_token_type,
-                    line: parser.last_line,
-                    column: parser.last_column,
-                }),
-            },
-            &TokenType::RightParen,
-        )?;
-        self.expect_token(&TokenType::RightParen)?;
+        self.expect_token(TokenType::LeftParen)?;
+        let params =
+            self.parse_comma_separated(Parser::expect_identifier, &TokenType::RightParen)?;
+        self.expect_token(TokenType::RightParen)?;
 
         let body = self.parse_block_statement()?;
 
@@ -351,11 +329,11 @@ impl<'c> Parser<'c> {
     }
 
     fn parse_return_statement(&mut self) -> ParserResult<Statement> {
-        self.expect_token(&TokenType::Keyword(KeywordType::Return))?;
+        self.expect_token(TokenType::Keyword(KeywordType::Return))?;
 
         let expression = self.parse_expression(0)?;
 
-        self.expect_token(&TokenType::Semicolon)?;
+        self.expect_token(TokenType::Semicolon)?;
 
         Ok(Statement::Return(expression))
     }
@@ -363,7 +341,7 @@ impl<'c> Parser<'c> {
     fn parse_block_statement(&mut self) -> ParserResult<Vec<Statement>> {
         let mut statements = Vec::new();
 
-        self.expect_token(&TokenType::LeftBrace)?;
+        self.expect_token(TokenType::LeftBrace)?;
         while self
             .peek_token()?
             .is_some_and(|token_type| *token_type != TokenType::RightBrace)
@@ -371,7 +349,7 @@ impl<'c> Parser<'c> {
             let statement = self.parse_statement()?;
             statements.push(statement);
         }
-        self.expect_token(&TokenType::RightBrace)?;
+        self.expect_token(TokenType::RightBrace)?;
 
         Ok(statements)
     }
@@ -384,16 +362,7 @@ mod test {
     #[test]
     fn basic() -> Result<(), ParserError> {
         let source = r"
-            fn test(arg1, arg2) {
-                let a = 2;
-                -2 + 3 * (4 + a);
-                true;
-                !false;
-                return a;
-                test(a);
-                a.b;
-                a.b.c();
-            }
+            foo.bar()(x).baz;
         ";
 
         let mut parser = Parser::new(source);

@@ -50,7 +50,7 @@ pub struct Token {
     pub column: usize,
 }
 
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, Copy)]
 pub enum LexerErrorType {
     #[error("unterminated string")]
     UnterminatedString,
@@ -62,7 +62,7 @@ pub enum LexerErrorType {
     UnknownCharacter(char),
 }
 
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, Copy)]
 #[error("{error_type} at line {line}, column {column}")]
 pub struct LexerError {
     pub error_type: LexerErrorType,
