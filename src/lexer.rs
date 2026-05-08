@@ -272,30 +272,29 @@ impl Iterator for Lexer<'_> {
 }
 
 #[cfg(test)]
-macro_rules! test_lexer {
-    ($name:ident, [$($char:literal => $expected:expr),+]) => {
-        #[test]
-        fn $name() -> Result<(), LexerError> {
-            let source = concat!($($char, " "),+);
-            let expected = [$($expected),+];
-
-            let lexer = Lexer::new(source);
-            let tokens = lexer.collect::<Result<Vec<_>, LexerError>>()?;
-
-            assert_eq!(tokens.len(), expected.len());
-
-            for (token, expected) in tokens.iter().zip(expected.iter()) {
-                assert_eq!(token.token_type, *expected);
-            }
-
-            Ok(())
-        }
-    };
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+
+    macro_rules! test_lexer {
+        ($name:ident, [$($char:literal => $expected:expr),+]) => {
+            #[test]
+            fn $name() -> Result<(), LexerError> {
+                let source = concat!($($char, " "),+);
+                let expected = [$($expected),+];
+
+                let lexer = Lexer::new(source);
+                let tokens = lexer.collect::<Result<Vec<_>, LexerError>>()?;
+
+                assert_eq!(tokens.len(), expected.len());
+
+                for (token, expected) in tokens.iter().zip(expected.iter()) {
+                    assert_eq!(token.token_type, *expected);
+                }
+
+                Ok(())
+            }
+        };
+    }
 
     test_lexer!(operators, [
         "="  => TokenType::Equal,

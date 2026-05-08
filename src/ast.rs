@@ -78,7 +78,7 @@ pub enum Statement {
 #[derive(Debug, PartialEq, Eq)]
 pub struct VariableDeclaration {
     pub name: String,
-    pub value: Expression,
+    pub value: Option<Expression>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -297,9 +297,10 @@ impl<'c> Parser<'c> {
 
         let name = self.expect_identifier()?;
 
-        self.expect_token(TokenType::Equal)?;
-
-        let value = self.parse_expression(0)?;
+        let value = match self.next_token_if(|token_type| *token_type == TokenType::Equal)? {
+            Some(_) => Some(self.parse_expression(0)?),
+            None => None,
+        };
 
         self.expect_token(TokenType::Semicolon)?;
 
@@ -359,18 +360,106 @@ impl<'c> Parser<'c> {
 mod test {
     use super::*;
 
-    #[test]
-    fn basic() -> Result<(), ParserError> {
-        let source = r"
-            foo.bar()(x).baz;
-        ";
+    macro_rules! test_parser {
+        ($name:ident, [$($source:literal => $expected:expr),+]) => {
+            #[test]
+            fn $name() -> ParserResult<()> {
+                $({
+                    let mut parser = Parser::new($source);
+                    let program = parser.parse()?;
 
-        let mut parser = Parser::new(source);
-        let program = parser.parse()?;
+                    assert_eq!(program, $expected);
+                })+
 
-        println!("{program:#?}");
-        assert_eq!(program.0.len(), 1);
-
-        Ok(())
+                Ok(())
+            }
+        };
     }
+
+    test_parser!(variable_declaration, [
+        "let test;" => Program(vec![
+            Statement::VariableDeclaration(VariableDeclaration {
+                name: String::from("test"),
+                value: None,
+            })
+        ]),
+
+        "let test = 2;" => Program(vec![
+            Statement::VariableDeclaration(VariableDeclaration {
+                name: String::from("test"),
+                value: Some(Expression::IntegerLiteral(2)),
+            })
+        ])
+    ]);
+
+    test_parser!(function_declaration, [
+        "fn test() {}" => Program(vec![
+            Statement::FunctionDeclaration(FunctionDeclaration {
+                name: String::from("test"),
+                params: vec![],
+                body: vec![],
+            })
+        ]),
+
+
+        "fn test(arg1, arg2, arg3) {}" => Program(vec![
+            Statement::FunctionDeclaration(FunctionDeclaration {
+                name: String::from("test"),
+                params: vec![String::from("arg1"), String::from("arg2"), String::from("arg3")],
+                body: vec![],
+            })
+        ]),
+
+        "fn test() { let other; }" => Program(vec![
+            Statement::FunctionDeclaration(FunctionDeclaration {
+                name: String::from("test"),
+                params: vec![],
+                body: vec![
+                    Statement::VariableDeclaration(VariableDeclaration {
+                        name: String::from("other"),
+                        value: None,
+                    }),
+                ],
+            })
+        ])
+    ]);
+
+    test_parser!(expressions, [
+        r#"
+            test;
+            123;
+            "test";
+            true;
+            false;
+        "# => Program(vec![
+            Statement::Expression(Expression::Identifier(String::from("test"))),
+            Statement::Expression(Expression::IntegerLiteral(123)),
+            Statement::Expression(Expression::StringLiteral(String::from("test"))),
+            Statement::Expression(Expression::BooleanLiteral(true)),
+            Statement::Expression(Expression::BooleanLiteral(false)),
+        ]),
+
+
+        r"
+            (2);
+            2 + 3;
+            2 + 3 * 4;
+        " => Program(vec![
+            Statement::Expression(Expression::IntegerLiteral(2)),
+            Statement::Expression(Expression::InfixOperation(InfixOperation {
+                operator: InfixOperator::Add,
+                lhs: Box::new(Expression::IntegerLiteral(2)),
+                rhs: Box::new(Expression::IntegerLiteral(3)),
+            })),
+            Statement::Expression(Expression::InfixOperation(InfixOperation {
+                operator: InfixOperator::Add,
+                lhs: Box::new(Expression::IntegerLiteral(2)),
+                rhs: Box::new(Expression::InfixOperation(InfixOperation {
+                    operator: InfixOperator::Mul,
+                    lhs: Box::new(Expression::IntegerLiteral(3)),
+                    rhs: Box::new(Expression::IntegerLiteral(4)),
+                }))
+            })),
+        ])
+    ]);
 }
