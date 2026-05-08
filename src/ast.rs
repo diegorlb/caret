@@ -72,7 +72,7 @@ pub enum Statement {
     Expression(Expression),
     VariableDeclaration(VariableDeclaration),
     FunctionDeclaration(FunctionDeclaration),
-    Return(Expression),
+    Return(Option<Expression>),
 }
 
 #[derive(Debug, PartialEq, Eq)]

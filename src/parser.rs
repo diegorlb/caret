@@ -332,7 +332,10 @@ impl<'c> Parser<'c> {
     fn parse_return_statement(&mut self) -> ParserResult<Statement> {
         self.expect_token(TokenType::Keyword(KeywordType::Return))?;
 
-        let expression = self.parse_expression(0)?;
+        let expression = match self.peek_token()? {
+            Some(TokenType::Semicolon) => None,
+            _ => Some(self.parse_expression(0)?),
+        };
 
         self.expect_token(TokenType::Semicolon)?;
 
@@ -376,7 +379,7 @@ mod test {
         };
     }
 
-    test_parser!(variable_declaration, [
+    test_parser!(variable_declaration_statement, [
         "let test;" => Program(vec![
             Statement::VariableDeclaration(VariableDeclaration {
                 name: String::from("test"),
@@ -392,7 +395,7 @@ mod test {
         ])
     ]);
 
-    test_parser!(function_declaration, [
+    test_parser!(function_declaration_statement, [
         "fn test() {}" => Program(vec![
             Statement::FunctionDeclaration(FunctionDeclaration {
                 name: String::from("test"),
@@ -424,6 +427,13 @@ mod test {
         ])
     ]);
 
+    test_parser!(return_statement, [
+        "return;" => Program(vec![ Statement::Return(None) ]),
+        "return true;" => Program(vec![
+            Statement::Return(Some(Expression::BooleanLiteral(true)))
+        ])
+    ]);
+
     test_parser!(expressions, [
         r#"
             test;
@@ -443,11 +453,28 @@ mod test {
         r"
             (2);
             2 + 3;
+            2 - 3;
+            2 / 3;
             2 + 3 * 4;
+            !true;
+            -2;
+            test();
+            test(1, true);
+            object.field;
         " => Program(vec![
             Statement::Expression(Expression::IntegerLiteral(2)),
             Statement::Expression(Expression::InfixOperation(InfixOperation {
                 operator: InfixOperator::Add,
+                lhs: Box::new(Expression::IntegerLiteral(2)),
+                rhs: Box::new(Expression::IntegerLiteral(3)),
+            })),
+            Statement::Expression(Expression::InfixOperation(InfixOperation {
+                operator: InfixOperator::Sub,
+                lhs: Box::new(Expression::IntegerLiteral(2)),
+                rhs: Box::new(Expression::IntegerLiteral(3)),
+            })),
+            Statement::Expression(Expression::InfixOperation(InfixOperation {
+                operator: InfixOperator::Div,
                 lhs: Box::new(Expression::IntegerLiteral(2)),
                 rhs: Box::new(Expression::IntegerLiteral(3)),
             })),
@@ -460,6 +487,29 @@ mod test {
                     rhs: Box::new(Expression::IntegerLiteral(4)),
                 }))
             })),
+            Statement::Expression(Expression::PrefixOperation(PrefixOperation {
+                operator: PrefixOperator::Not,
+                expression: Box::new(Expression::BooleanLiteral(true)),
+            })),
+            Statement::Expression(Expression::PrefixOperation(PrefixOperation {
+                operator: PrefixOperator::Neg,
+                expression: Box::new(Expression::IntegerLiteral(2)),
+            })),
+            Statement::Expression(Expression::FunctionCall(FunctionCall {
+                callee: Box::new(Expression::Identifier(String::from("test"))),
+                args: vec![],
+            })),
+            Statement::Expression(Expression::FunctionCall(FunctionCall {
+                callee: Box::new(Expression::Identifier(String::from("test"))),
+                args: vec![
+                    Expression::IntegerLiteral(1),
+                    Expression::BooleanLiteral(true)
+                ],
+            })),
+            Statement::Expression(Expression::FieldAccess(FieldAccess {
+                receiver: Box::new(Expression::Identifier(String::from("object"))),
+                field: String::from("field")
+            }))
         ])
     ]);
 }

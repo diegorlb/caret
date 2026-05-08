@@ -320,6 +320,13 @@ mod tests {
         "}" => TokenType::RightBrace
     ]);
 
+    test_lexer!(miscellaneous, [
+        "," => TokenType::Comma,
+        "." => TokenType::Dot,
+        ":" => TokenType::Colon,
+        ";" => TokenType::Semicolon
+    ]);
+
     test_lexer!(keywords, [
         "true"  => TokenType::Keyword(KeywordType::True),
         "false" => TokenType::Keyword(KeywordType::False),
