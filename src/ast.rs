@@ -70,9 +70,16 @@ pub struct Program(pub Vec<Statement>);
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
     Expression(Expression),
+    StructDeclaration(StructDeclaration),
     VariableDeclaration(VariableDeclaration),
     FunctionDeclaration(FunctionDeclaration),
     Return(Option<Expression>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StructDeclaration {
+    pub name: String,
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -94,10 +101,17 @@ pub enum Expression {
     StringLiteral(String),
     IntegerLiteral(i64),
     BooleanLiteral(bool),
+    StructLiteral(StructLiteral),
     PrefixOperation(PrefixOperation),
     InfixOperation(InfixOperation),
     FunctionCall(FunctionCall),
     FieldAccess(FieldAccess),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StructLiteral {
+    pub name: Option<String>,
+    pub fields: Vec<(String, Expression)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

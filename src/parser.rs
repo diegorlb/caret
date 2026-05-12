@@ -5,7 +5,8 @@ use thiserror::Error;
 use crate::{
     ast::{
         Expression, FieldAccess, FunctionCall, FunctionDeclaration, InfixOperation, InfixOperator,
-        PrefixOperation, PrefixOperator, Program, Statement, VariableDeclaration,
+        PrefixOperation, PrefixOperator, Program, Statement, StructDeclaration, StructLiteral,
+        VariableDeclaration,
     },
     lexer::{KeywordType, Lexer, LexerError, TokenType},
 };
@@ -130,6 +131,25 @@ impl<'c> Parser<'c> {
         Ok(items)
     }
 
+    fn parse_struct_fields(&mut self) -> ParserResult<Vec<(String, Expression)>> {
+        self.expect_token(TokenType::LeftBrace)?;
+        let fields = self.parse_comma_separated(
+            |parser| {
+                let name = parser.expect_identifier()?;
+
+                parser.expect_token(TokenType::Colon)?;
+
+                let expression = parser.parse_expression(0)?;
+
+                Ok((name, expression))
+            },
+            &TokenType::RightBrace,
+        )?;
+        self.expect_token(TokenType::RightBrace)?;
+
+        Ok(fields)
+    }
+
     /// Returns the parse of this [`Parser`].
     ///
     /// # Errors
@@ -155,6 +175,7 @@ impl<'c> Parser<'c> {
 
         match token_type {
             TokenType::Keyword(keyword) => match keyword {
+                KeywordType::Struct => self.parse_struct_declaration_statement(),
                 KeywordType::Let => self.parse_variable_declaration_statement(),
                 KeywordType::Fn => self.parse_function_declaration_statement(),
                 KeywordType::Return => self.parse_return_statement(),
@@ -185,12 +206,25 @@ impl<'c> Parser<'c> {
 
     fn parse_primary_expression(&mut self, token_type: TokenType) -> ParserResult<Expression> {
         let expression = match token_type {
-            TokenType::Identifier(identifier) => Expression::Identifier(identifier),
+            TokenType::Identifier(identifier) => match self.peek_token()? {
+                Some(TokenType::LeftBrace) => Expression::StructLiteral(StructLiteral {
+                    name: Some(identifier),
+                    fields: self.parse_struct_fields()?,
+                }),
+
+                _ => Expression::Identifier(identifier),
+            },
+
             TokenType::StringLiteral(literal) => Expression::StringLiteral(literal),
             TokenType::IntegerLiteral(literal) => Expression::IntegerLiteral(literal),
 
             TokenType::Keyword(KeywordType::True) => Expression::BooleanLiteral(true),
             TokenType::Keyword(KeywordType::False) => Expression::BooleanLiteral(false),
+
+            TokenType::Keyword(KeywordType::Struct) => {
+                let fields = self.parse_struct_fields()?;
+                Expression::StructLiteral(StructLiteral { name: None, fields })
+            }
 
             TokenType::LeftParen => {
                 let expression = self.parse_expression(0)?;
@@ -292,6 +326,24 @@ impl<'c> Parser<'c> {
         Ok(Statement::Expression(expression))
     }
 
+    fn parse_struct_declaration_statement(&mut self) -> ParserResult<Statement> {
+        self.expect_token(TokenType::Keyword(KeywordType::Struct))?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect_token(TokenType::LeftBrace)?;
+        let fields =
+            self.parse_comma_separated(Parser::expect_identifier, &TokenType::RightBrace)?;
+        self.expect_token(TokenType::RightBrace)?;
+
+        self.expect_token(TokenType::Semicolon)?;
+
+        Ok(Statement::StructDeclaration(StructDeclaration {
+            name,
+            fields,
+        }))
+    }
+
     fn parse_variable_declaration_statement(&mut self) -> ParserResult<Statement> {
         self.expect_token(TokenType::Keyword(KeywordType::Let))?;
 
@@ -379,6 +431,26 @@ mod test {
         };
     }
 
+    test_parser!(struct_declaration_statement, [
+        "struct test {};" => Program(vec![
+            Statement::StructDeclaration(StructDeclaration{
+                name: String::from("test"),
+                fields: vec![],
+            })
+        ]),
+
+        "struct test { x, y, z };" => Program(vec![
+            Statement::StructDeclaration(StructDeclaration{
+                name: String::from("test"),
+                fields: vec![
+                    String::from("x"),
+                    String::from("y"),
+                    String::from("z")
+                ],
+            })
+        ])
+    ]);
+
     test_parser!(variable_declaration_statement, [
         "let test;" => Program(vec![
             Statement::VariableDeclaration(VariableDeclaration {
@@ -435,6 +507,34 @@ mod test {
     ]);
 
     test_parser!(expressions, [
+        r"
+            let a = struct {};
+            let a = point {};
+            let a = point { x: 1 };
+        " => Program(vec![
+            Statement::VariableDeclaration(VariableDeclaration {
+                name: String::from("a"),
+                value: Some(Expression::StructLiteral(StructLiteral {
+                    name: None,
+                    fields: vec![]
+                })),
+            }),
+            Statement::VariableDeclaration(VariableDeclaration {
+                name: String::from("a"),
+                value: Some(Expression::StructLiteral(StructLiteral {
+                    name: Some(String::from("point")),
+                    fields: vec![]
+                })),
+            }),
+            Statement::VariableDeclaration(VariableDeclaration {
+                name: String::from("a"),
+                value: Some(Expression::StructLiteral(StructLiteral {
+                    name: Some(String::from("point")),
+                    fields: vec![(String::from("x"), Expression::IntegerLiteral(1))]
+                })),
+            }),
+        ]),
+
         r#"
             test;
             123;

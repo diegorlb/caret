@@ -6,6 +6,7 @@ use thiserror::Error;
 pub enum KeywordType {
     True,
     False,
+    Struct,
     Let,
     Fn,
     Return,
@@ -171,6 +172,7 @@ impl<'c> Lexer<'c> {
         let keyword_type = match identifier.as_str() {
             "true" => Some(KeywordType::True),
             "false" => Some(KeywordType::False),
+            "struct" => Some(KeywordType::Struct),
             "let" => Some(KeywordType::Let),
             "fn" => Some(KeywordType::Fn),
             "return" => Some(KeywordType::Return),
@@ -330,6 +332,7 @@ mod tests {
     test_lexer!(keywords, [
         "true"  => TokenType::Keyword(KeywordType::True),
         "false" => TokenType::Keyword(KeywordType::False),
+        "struct" => TokenType::Keyword(KeywordType::Struct),
         "fn"    => TokenType::Keyword(KeywordType::Fn)
     ]);
 
